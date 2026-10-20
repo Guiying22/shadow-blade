@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#07080f">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2307080f'/%3E%3Cpath d='M8 24 24 8' stroke='%235ee7ef' stroke-width='3'/%3E%3Crect x='20' y='6' width='6' height='4' fill='%23ff4d6d'/%3E%3C/svg%3E">
+  <title>影刃 · SHADOW BLADE — 像素决斗</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="arcade">
+    <header class="marquee" aria-label="游戏标题">
+      <div class="marquee-left">
+        <span class="status-dot"></span>
+        <span class="marquee-title">SHADOW BLADE</span>
+      </div>
+      <div class="marquee-right">像素决斗 <span class="slash">/</span> PIXEL DUEL</div>
+    </header>
+
+    <div class="cabinet">
+      <section class="screen-frame" aria-label="游戏画面">
+        <canvas id="game" width="480" height="270">
+          你的浏览器不支持 Canvas，请使用较新的浏览器。
+        </canvas>
+        <div class="scanlines" aria-hidden="true"></div>
+        <div class="vignette" aria-hidden="true"></div>
+
+        <div id="callout" class="callout" aria-live="polite">
+          <span id="calloutTitle" class="callout-title"></span>
+          <span id="calloutSub" class="callout-sub"></span>
+        </div>
+      </section>
+
+      <div id="overlay" class="overlay">
+        <div class="panel">
+          <p id="ovKicker" class="kicker">PIXEL DUEL / 像素决斗</p>
+          <h1 id="ovTitle" class="game-title">影刃</h1>
+          <p id="ovText" class="ov-text">
+            在红刃落下前的一瞬闪开。<br>
+            完美闪避会让你的下一刀，粉碎敌人的架势。
+          </p>
+
+          <div id="ovControls" class="key-guide">
+            <div class="key-row">
+              <span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span>
+              <span>移动 / 方向键同样可用</span>
+            </div>
+            <div class="key-row">
+              <span class="keys"><kbd>J</kbd></span>
+              <span>挥刀攻击</span>
+            </div>
+            <div class="key-row">
+              <span class="keys"><kbd>K</kbd><kbd>SPACE</kbd></span>
+              <span>闪避 · 短暂无敌</span>
+            </div>
+          </div>
+
+          <div id="ovStats" class="result-stats" hidden></div>
+
+          <button id="primaryBtn" class="primary-btn" type="button">开始战斗</button>
+          <p id="ovPress" class="press-hint">按 <kbd>ENTER</kbd> 开始</p>
+        </div>
+      </div>
+    </div>
+
+    <footer class="tips">
+      <div class="tip">
+        <span class="tip-icon red">!</span>
+        <p><strong>读懂红光</strong>敌人抬手蓄力时，地面会出现红色攻击范围。</p>
+      </div>
+      <div class="tip">
+        <span class="tip-icon cyan">◇</span>
+        <p><strong>完美闪避</strong>在攻击落下的瞬间闪开，下一刀随机触发暴击或眩晕。</p>
+      </div>
+      <div class="tip">
+        <span class="tip-icon gold">×1.5</span>
+        <p><strong>两种命运</strong>暴击造成 1.5 倍伤害；眩晕会打断敌人并创造输出空档。</p>
+      </div>
+    </footer>
+
+    <div class="sub-controls">
+      <span><kbd>P</kbd> 暂停</span>
+      <span><kbd>R</kbd> 重新开始</span>
+      <span class="sub-note">推荐使用键盘游玩</span>
+    </div>
+  </main>
+
+  <script src="game.js"></script>
+</body>
+</html>
