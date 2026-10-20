@@ -20,6 +20,53 @@
   const PLAYER_DAMAGE = 14;
   const CRIT_MULT = 1.5;
   const BUFF_TIME = 5;
+  const WAVE_HEAL = 30;
+
+  const WAVE_DEFS = [
+    {
+      quota: 10,
+      maxAlive: 5,
+      spawnInterval: 1.05,
+      weights: { a: 0.4, b: 0.3, c: 0.2, d: 0.1 },
+    },
+    {
+      quota: 15,
+      maxAlive: 6,
+      spawnInterval: 0.85,
+      weights: { a: 0.25, b: 0.3, c: 0.3, d: 0.15 },
+    },
+    {
+      quota: 0,
+      maxAlive: 3,
+      spawnInterval: 2.3,
+      weights: { a: 0.3, b: 0.25, c: 0.25, d: 0.2 },
+    },
+  ];
+
+  const MINIONS = {
+    a: { name: "赤鬼", hp: 28, r: 8, speed: 48, contact: 8, melee: 10, color: "#ff6b7d" },
+    b: { name: "疾影", hp: 10, r: 6, speed: 112, contact: 7, color: "#ff6be0" },
+    c: {
+      name: "咒术师",
+      hp: 22,
+      r: 8,
+      speed: 32,
+      shot: 7,
+      shotSpeed: 112,
+      shotLife: 3.5,
+      color: "#c58bff",
+    },
+    d: {
+      name: "瞳炮",
+      hp: 34,
+      r: 9,
+      speed: 0,
+      laser: 14,
+      charge: 0.3,
+      beam: 0.2,
+      color: "#ffa25c",
+    },
+  };
 
   const UI = {
     overlay: document.getElementById("overlay"),
@@ -142,6 +189,27 @@
         tone(220, 0.3, { type: "sawtooth", volume: 0.12, slide: 130 });
         tone(150, 0.5, { type: "triangle", volume: 0.1, slide: 55, delay: 0.2 });
         break;
+      case "spawn":
+        tone(170, 0.14, { type: "triangle", volume: 0.06, slide: 360 });
+        break;
+      case "shoot":
+        tone(560, 0.1, { type: "square", volume: 0.055, slide: 240 });
+        break;
+      case "laserCharge":
+        tone(1150, 0.3, { type: "sawtooth", volume: 0.045, slide: 260 });
+        break;
+      case "laserFire":
+        tone(110, 0.26, { type: "sawtooth", volume: 0.12, slide: 62 });
+        tone(1500, 0.14, { type: "square", volume: 0.045, slide: 420 });
+        break;
+      case "minionDie":
+        tone(320, 0.12, { type: "square", volume: 0.065, slide: 85 });
+        break;
+      case "waveClear":
+        tone(392, 0.14, { type: "triangle", volume: 0.09 });
+        tone(523, 0.16, { type: "triangle", volume: 0.09, delay: 0.1 });
+        tone(659, 0.24, { type: "triangle", volume: 0.1, delay: 0.2 });
+        break;
       default:
         break;
     }
@@ -182,6 +250,7 @@
     lastDirY: 0,
     buffTimer: 0,
     hurtFlash: 0,
+    hurtCd: 0,
     walkPhase: 0,
     moving: false,
     ghostTimer: 0,
@@ -191,6 +260,8 @@
   };
 
   const enemy = {
+    kind: "boss",
+    active: false,
     x: 336,
     y: 170,
     r: 13,
@@ -210,11 +281,21 @@
     enraged: false,
   };
 
+  const waveState = {
+    index: 0,
+    kills: 0,
+    quota: 10,
+    state: "idle",
+    timer: 0,
+    spawnTimer: 0,
+  };
+
   const stats = {
     perfect: 0,
     crits: 0,
     stuns: 0,
     hits: 0,
+    kills: 0,
     damageDealt: 0,
     damageTaken: 0,
   };
@@ -223,6 +304,8 @@
   const damageNumbers = [];
   const slashes = [];
   const rings = [];
+  const minions = [];
+  const projectiles = [];
 
   const keys = new Set();
 
@@ -318,6 +401,8 @@
       "<span>完美闪避 <b>" + stats.perfect + "</b></span>",
       "<span>暴击 <b>" + stats.crits + "</b></span>",
       "<span>眩晕 <b>" + stats.stuns + "</b></span>",
+      "<span>击杀小怪 <b>" + stats.kills + "</b></span>",
+      "<span>到达波次 <b>" + (waveState.index + 1) + " / 3</b></span>",
       '<span class="stat-wide">造成伤害 <b>' + stats.damageDealt + "</b></span>",
     ].join("");
   }
@@ -327,7 +412,7 @@
       start: {
         kicker: "PIXEL DUEL / 像素决斗",
         title: "影刃",
-        text: "在红刃落下前的一瞬闪开。<br>完美闪避会让你的下一刀，粉碎敌人的架势。",
+        text: "三个波次，四类妖物。<br>清剿十只、十五只，最终迎战鬼武者。",
         controls: true,
         stats: false,
         button: "开始战斗",
@@ -345,7 +430,7 @@
       won: {
         kicker: "VICTORY / 胜利",
         title: "斩鬼",
-        text: "鬼武者倒下了。你的刀，比恐惧更快。",
+        text: "鬼武者倒下了。三个波次，尽数斩断。",
         controls: false,
         stats: true,
         button: "再战一场",
@@ -354,7 +439,7 @@
       lost: {
         kicker: "DEFEATED / 败北",
         title: "败北",
-        text: "红刃穿过了你的防线。再来一次，读准它的节奏。",
+        text: "你倒在了第 " + (waveState.index + 1) + " 波。再来一次，读准它们的节奏。",
         controls: false,
         stats: true,
         button: "重新挑战",
@@ -402,6 +487,7 @@
       lastDirY: 0,
       buffTimer: 0,
       hurtFlash: 0,
+      hurtCd: 0,
       walkPhase: 0,
       moving: false,
       ghostTimer: 0,
@@ -411,6 +497,7 @@
     });
 
     Object.assign(enemy, {
+      active: false,
       x: 336,
       y: 170,
       r: 13,
@@ -435,14 +522,26 @@
       crits: 0,
       stuns: 0,
       hits: 0,
+      kills: 0,
       damageDealt: 0,
       damageTaken: 0,
+    });
+
+    Object.assign(waveState, {
+      index: 0,
+      kills: 0,
+      quota: WAVE_DEFS[0].quota,
+      state: "idle",
+      timer: 0,
+      spawnTimer: 0,
     });
 
     particles.length = 0;
     damageNumbers.length = 0;
     slashes.length = 0;
     rings.length = 0;
+    minions.length = 0;
+    projectiles.length = 0;
 
     game.playTime = 0;
     game.shake = 0;
@@ -463,12 +562,8 @@
     resetWorld();
     game.mode = "playing";
     hideOverlay();
+    startWave(0);
     lastFrame = performance.now();
-    setTimeout(() => {
-      if (game.mode === "playing") {
-        showCallout("对决开始", "闪开红刃，反击制胜", "", 900);
-      }
-    }, 180);
   }
 
   function togglePause() {
@@ -521,6 +616,10 @@
       game.shake = 10;
       game.flash = 1;
       game.flashColor = "#ffd27a";
+      for (const m of minions) {
+        if (!m.dead) killMinion(m, { count: false, silent: true });
+      }
+      projectiles.length = 0;
     } else {
       player.hp = 0;
       player.deadTime = 0;
@@ -536,6 +635,10 @@
       game.shake = 9;
       game.flash = 1;
       game.flashColor = "#ff294d";
+      for (const m of minions) {
+        if (!m.dead) killMinion(m, { count: false, silent: true });
+      }
+      projectiles.length = 0;
     }
   }
 
@@ -688,15 +791,34 @@
     player.attackCd = ATTACK_CD;
     player.attackAnim = 0.18;
 
-    const dx = enemy.x - player.x;
-    const dy = enemy.y - player.y;
-    const baseAngle = Math.atan2(dy, dx);
-    player.facing = dx >= 0 ? 1 : -1;
+    const hostiles = [];
+    if (enemy.active && enemy.hp > 0) hostiles.push(enemy);
+    for (const m of minions) {
+      if (!m.dead) hostiles.push(m);
+    }
 
-    const length = Math.hypot(dx, dy) || 1;
-    player.x += (dx / length) * 5;
-    player.y += (dy / length) * 4;
-    clampPlayer();
+    let primary = null;
+    let primaryDistance = Infinity;
+    for (const h of hostiles) {
+      const d = dist(player.x, player.y, h.x, h.y);
+      if (d < primaryDistance) {
+        primary = h;
+        primaryDistance = d;
+      }
+    }
+
+    const baseAngle = primary
+      ? Math.atan2(primary.y - player.y, primary.x - player.x)
+      : player.facing >= 0
+        ? 0
+        : Math.PI;
+    player.facing = Math.cos(baseAngle) >= 0 ? 1 : -1;
+
+    if (primary && primaryDistance > 1) {
+      player.x += Math.cos(baseAngle) * 5;
+      player.y += Math.sin(baseAngle) * 5;
+      clampPlayer();
+    }
 
     addSlash(
       player.x,
@@ -731,8 +853,16 @@
 
     sfx("swing");
 
-    if (enemy.hp <= 0) return;
-    if (dist(player.x, player.y, enemy.x, enemy.y) > ATTACK_REACH) return;
+    const hitList = [];
+    for (const h of hostiles) {
+      const d = dist(player.x, player.y, h.x, h.y);
+      if (d > ATTACK_REACH + h.r) continue;
+      const angleToTarget = Math.atan2(h.y - player.y, h.x - player.x);
+      if (Math.abs(normAngle(angleToTarget - baseAngle)) > 1.2) continue;
+      hitList.push(h);
+    }
+
+    if (hitList.length === 0) return;
 
     let critical = false;
     let stun = false;
@@ -754,7 +884,10 @@
     }
 
     const damage = Math.round(PLAYER_DAMAGE * (critical ? CRIT_MULT : 1));
-    applyEnemyDamage(damage, { critical, stun });
+    for (const h of hitList) {
+      if (h.kind === "boss") applyEnemyDamage(damage, { critical, stun });
+      else applyMinionDamage(h, damage, { critical, stun });
+    }
   }
 
   function applyEnemyDamage(damage, options = {}) {
@@ -863,15 +996,15 @@
     sfx("perfect");
   }
 
-  function hurtPlayer(damage) {
+  function hurtPlayer(damage, sourceX = enemy.x, sourceY = enemy.y) {
     if (player.hp <= 0) return;
 
     player.hp = Math.max(0, player.hp - damage);
     player.hurtFlash = 0.25;
     stats.damageTaken += damage;
 
-    let dx = player.x - enemy.x;
-    let dy = player.y - enemy.y;
+    let dx = player.x - sourceX;
+    let dy = player.y - sourceY;
     const length = Math.hypot(dx, dy) || 1;
     player.x += (dx / length) * 19;
     player.y += (dy / length) * 15;
@@ -906,6 +1039,645 @@
     }
 
     if (player.hp <= 0) beginEnding("lost");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Waves & minions
+  // ---------------------------------------------------------------------------
+  function startWave(index) {
+    const cfg = WAVE_DEFS[index];
+    waveState.index = index;
+    waveState.kills = 0;
+    waveState.quota = cfg.quota;
+    waveState.state = index === 2 ? "boss" : "active";
+    waveState.timer = 0;
+    waveState.spawnTimer = 0.35;
+    projectiles.length = 0;
+    minions.length = 0;
+
+    if (index === 2) {
+      activateBoss();
+      showCallout("最终波 · 鬼武者", "小怪仍会涌入 · 击败鬼武者", "enrage", 1900);
+    } else {
+      showCallout(
+        index === 0 ? "第一波" : "第二波",
+        "清剿 " + cfg.quota + " 只小怪",
+        index === 0 ? "" : "perfect",
+        1500
+      );
+      spawnMinion();
+    }
+  }
+
+  function activateBoss() {
+    Object.assign(enemy, {
+      active: true,
+      x: 336,
+      y: 168,
+      r: 13,
+      facing: -1,
+      hp: 126,
+      maxHp: 126,
+      displayHp: 126,
+      attackCd: 1.2,
+      state: "idle",
+      timer: 0,
+      windupDuration: 0.68,
+      attackAngle: Math.PI,
+      hurtFlash: 0,
+      walkPhase: 0,
+      deadTime: 0,
+      deathFxTimer: 0,
+      enraged: false,
+    });
+
+    addRing(enemy.x, enemy.y - 20, "#ff4d6d", 100, 0.8, 3);
+    addRing(enemy.x, enemy.y - 20, "#ffc857", 58, 0.55, 1);
+    addBurst(enemy.x, enemy.y - 24, {
+      count: 30,
+      colors: ["#ff4d6d", "#ffc857", "#ffffff", "#6d1729"],
+      speed: 125,
+      size: 3,
+      life: [0.35, 0.9],
+      gravity: -20,
+    });
+    game.shake = Math.max(game.shake, 7);
+    game.flash = Math.max(game.flash, 0.45);
+    game.flashColor = "#ff294d";
+    sfx("enrage");
+  }
+
+  function beginWaveClear() {
+    if (waveState.state !== "active") return;
+    waveState.state = "clear";
+    waveState.timer = 1.7;
+
+    for (const m of minions) {
+      if (!m.dead) killMinion(m, { count: false, silent: true });
+    }
+    projectiles.length = 0;
+
+    const healed = Math.min(WAVE_HEAL, player.maxHp - player.hp);
+    if (healed > 0) {
+      player.hp += healed;
+      addDamageNumber(player.x, player.y - 42, "+" + healed, "#8dffc0", 10, false);
+    }
+
+    addRing(player.x, player.y - 10, "#ffc857", 96, 0.7, 2);
+    game.shake = Math.max(game.shake, 3);
+    showCallout(
+      waveState.index === 0 ? "第一波 突破" : "第二波 突破",
+      (healed > 0 ? "恢复 " + healed + " 生命 · " : "") +
+        (waveState.index === 0 ? "第二波来袭" : "鬼武者现身"),
+      "perfect",
+      1600
+    );
+    sfx("waveClear");
+  }
+
+  function updateWave(dt) {
+    if (waveState.state === "clear") {
+      waveState.timer -= dt;
+      if (waveState.timer <= 0) startWave(waveState.index + 1);
+      return;
+    }
+
+    if (waveState.state !== "active" && waveState.state !== "boss") return;
+
+    const cfg = WAVE_DEFS[waveState.index];
+    let alive = 0;
+    for (const m of minions) {
+      if (!m.dead) alive += 1;
+    }
+
+    waveState.spawnTimer -= dt;
+    if (alive < cfg.maxAlive && waveState.spawnTimer <= 0) {
+      spawnMinion();
+      waveState.spawnTimer = cfg.spawnInterval * rand(0.82, 1.18);
+    }
+  }
+
+  function pickMinionType() {
+    const weights = WAVE_DEFS[waveState.index].weights;
+    let roll = Math.random();
+    for (const key of ["a", "b", "c", "d"]) {
+      roll -= weights[key];
+      if (roll <= 0) return key;
+    }
+    return "a";
+  }
+
+  function findMinionSpawn() {
+    let best = null;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < 36; i += 1) {
+      const x = rand(ARENA.left + 16, ARENA.right - 16);
+      const y = rand(ARENA.top + 12, ARENA.bottom - 8);
+      const playerDistance = dist(x, y, player.x, player.y);
+      let crowdDistance = Infinity;
+      for (const m of minions) {
+        if (!m.dead) crowdDistance = Math.min(crowdDistance, dist(x, y, m.x, m.y));
+      }
+      if (playerDistance > 86 && crowdDistance > 34) return { x, y };
+      const score = Math.min(playerDistance, 220) + Math.min(crowdDistance, 80);
+      if (score > bestScore) {
+        bestScore = score;
+        best = { x, y };
+      }
+    }
+
+    return best || { x: ARENA.right - 34, y: ARENA.top + 24 };
+  }
+
+  function spawnMinion(type = pickMinionType()) {
+    const def = MINIONS[type];
+    const pos = findMinionSpawn();
+    const m = {
+      kind: "minion",
+      type,
+      x: pos.x,
+      y: pos.y,
+      r: def.r,
+      speed: def.speed,
+      hp: def.hp,
+      maxHp: def.hp,
+      displayHp: def.hp,
+      facing: player.x >= pos.x ? 1 : -1,
+      state: "idle",
+      timer: 0,
+      attackAngle: 0,
+      attackCd: rand(0.35, 0.9),
+      hurtFlash: 0,
+      walkPhase: rand(0, TAU),
+      dead: false,
+      deathTimer: 0,
+      spawnFx: 0.4,
+      shotTimer: rand(0.35, 0.9),
+      laserState: "idle",
+      laserTimer: rand(0.9, 2.1),
+      laserAngle: 0,
+      laserHit: false,
+      strafe: Math.random() < 0.5 ? -1 : 1,
+    };
+
+    minions.push(m);
+    addRing(pos.x, pos.y - 8, def.color, 26, 0.4, 2);
+    addBurst(pos.x, pos.y - 10, {
+      count: 10,
+      colors: [def.color, "#ffffff", "#3a2440"],
+      speed: 55,
+      size: 2,
+      life: [0.2, 0.5],
+      gravity: -20,
+    });
+    sfx("spawn");
+    return m;
+  }
+
+  function updateMinions(dt) {
+    for (let i = minions.length - 1; i >= 0; i -= 1) {
+      const m = minions[i];
+      m.hurtFlash = Math.max(0, m.hurtFlash - dt);
+      m.spawnFx = Math.max(0, m.spawnFx - dt);
+      m.displayHp += (m.hp - m.displayHp) * Math.min(1, dt * 8);
+
+      if (m.dead) {
+        m.deathTimer -= dt;
+        if (m.deathTimer <= 0) minions.splice(i, 1);
+        continue;
+      }
+
+      if (m.state === "stunned") {
+        m.timer -= dt;
+        if (m.timer <= 0) m.state = "idle";
+        continue;
+      }
+
+      const dx = player.x - m.x;
+      const dy = player.y - m.y;
+      const distance = Math.hypot(dx, dy) || 1;
+      if (m.type !== "d") m.facing = dx >= 0 ? 1 : -1;
+
+      if (m.type === "a") updateBrawler(m, dt, dx, dy, distance);
+      else if (m.type === "b") updateSwift(m, dt, dx, dy, distance);
+      else if (m.type === "c") updateCaster(m, dt, dx, dy, distance);
+      else updateBeamTurret(m, dt);
+    }
+
+    separateMinions();
+  }
+
+  function updateBrawler(m, dt, dx, dy, distance) {
+    m.attackCd = Math.max(0, m.attackCd - dt);
+
+    if (m.state === "windup") {
+      m.timer -= dt;
+      if (m.timer <= 0) {
+        m.state = "strike";
+        m.timer = 0.18;
+        addSlash(m.x, m.y - 8, m.attackAngle, 27, 1.5, 0.16, "#ff6b7d", 2);
+        addSlash(m.x, m.y - 8, m.attackAngle, 31, 1.2, 0.12, "#ffd0d6", 1);
+        sfx("enemySlash");
+
+        const distanceNow = dist(player.x, player.y, m.x, m.y);
+        const angleToPlayer = Math.atan2(player.y - m.y, player.x - m.x);
+        if (distanceNow <= 42 && Math.abs(normAngle(angleToPlayer - m.attackAngle)) <= 1.15) {
+          if (player.dodgeTimer > 0) perfectDodge();
+          else hurtPlayer(MINIONS.a.melee, m.x, m.y);
+        }
+        m.attackCd = rand(1.15, 1.7);
+      }
+      return;
+    }
+
+    if (m.state === "strike") {
+      m.timer -= dt;
+      if (m.timer <= 0) m.state = "idle";
+      return;
+    }
+
+    if (distance > 28) {
+      m.x += (dx / distance) * m.speed * dt;
+      m.y += (dy / distance) * m.speed * dt;
+      m.walkPhase += m.speed * dt * 0.12;
+    } else if (distance < 19) {
+      m.x -= (dx / distance) * m.speed * 0.4 * dt;
+      m.y -= (dy / distance) * m.speed * 0.4 * dt;
+    }
+
+    m.x = clamp(m.x, ARENA.left + m.r, ARENA.right - m.r);
+    m.y = clamp(m.y, ARENA.top + m.r - 4, ARENA.bottom - 2);
+
+    if (m.attackCd <= 0 && distance <= 38) {
+      m.state = "windup";
+      m.timer = 0.42;
+      m.attackAngle = Math.atan2(dy, dx);
+      addBurst(m.x, m.y - 12, {
+        count: 5,
+        colors: ["#ff6b7d", "#ffb3ba"],
+        speed: 36,
+        size: 1,
+        life: [0.15, 0.35],
+        gravity: -16,
+      });
+      sfx("warn");
+    }
+  }
+
+  function updateSwift(m, dt, dx, dy) {
+    const wobble = Math.sin(game.clock * 14 + m.walkPhase) * 0.45;
+    const angle = Math.atan2(dy, dx) + wobble;
+    m.x += Math.cos(angle) * m.speed * dt;
+    m.y += Math.sin(angle) * m.speed * dt;
+    m.walkPhase += dt * 16;
+    m.x = clamp(m.x, ARENA.left + m.r, ARENA.right - m.r);
+    m.y = clamp(m.y, ARENA.top + m.r - 4, ARENA.bottom - 2);
+  }
+
+  function updateCaster(m, dt, dx, dy, distance) {
+    m.shotTimer -= dt;
+
+    if (distance < 88) {
+      m.x -= (dx / distance) * m.speed * dt;
+      m.y -= (dy / distance) * m.speed * dt;
+      m.walkPhase += dt * 4;
+    } else if (distance > 132) {
+      m.x += (dx / distance) * m.speed * dt;
+      m.y += (dy / distance) * m.speed * dt;
+      m.walkPhase += dt * 4;
+    } else {
+      m.x += (-dy / distance) * m.strafe * m.speed * 0.6 * dt;
+      m.y += (dx / distance) * m.strafe * m.speed * 0.6 * dt;
+      m.walkPhase += dt * 3;
+    }
+
+    m.x = clamp(m.x, ARENA.left + m.r, ARENA.right - m.r);
+    m.y = clamp(m.y, ARENA.top + m.r - 4, ARENA.bottom - 2);
+
+    if (m.shotTimer <= 0) {
+      m.shotTimer = 1;
+      fireProjectile(m);
+    }
+  }
+
+  function fireProjectile(m) {
+    const angle = Math.atan2(player.y - 8 - (m.y - 9), player.x - m.x);
+    projectiles.push({
+      x: m.x + Math.cos(angle) * 11,
+      y: m.y - 9 + Math.sin(angle) * 11,
+      vx: Math.cos(angle) * MINIONS.c.shotSpeed,
+      vy: Math.sin(angle) * MINIONS.c.shotSpeed,
+      angle,
+      r: 3,
+      life: MINIONS.c.shotLife,
+      maxLife: MINIONS.c.shotLife,
+    });
+
+    addBurst(m.x, m.y - 12, {
+      count: 5,
+      colors: ["#c58bff", "#e6cbff", "#ffffff"],
+      speed: 40,
+      size: 1,
+      life: [0.1, 0.3],
+      gravity: 0,
+      angle,
+      spread: 0.7,
+    });
+    sfx("shoot");
+  }
+
+  function updateProjectiles(dt) {
+    for (let i = projectiles.length - 1; i >= 0; i -= 1) {
+      const p = projectiles[i];
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      if (p.life <= 0 || p.x < -40 || p.x > W + 40 || p.y < -40 || p.y > H + 40) {
+        projectiles.splice(i, 1);
+        continue;
+      }
+
+      if (dist(p.x, p.y, player.x, player.y - 8) <= player.r + p.r + 1) {
+        projectiles.splice(i, 1);
+        addBurst(p.x, p.y, {
+          count: 9,
+          colors: ["#c58bff", "#ffffff", "#7a4dff"],
+          speed: 80,
+          size: 2,
+          life: [0.15, 0.4],
+          gravity: 60,
+        });
+        if (player.dodgeTimer > 0) perfectDodge();
+        else hurtPlayer(MINIONS.c.shot, p.x, p.y);
+      }
+    }
+  }
+
+  function updateBeamTurret(m, dt) {
+    m.laserTimer -= dt;
+
+    if (m.laserState === "idle") {
+      if (m.laserTimer <= 0) {
+        m.laserState = "charge";
+        m.laserTimer = MINIONS.d.charge;
+        m.laserAngle = Math.atan2(player.y - 8 - (m.y - 21), player.x - m.x);
+        m.laserHit = false;
+        sfx("laserCharge");
+      }
+      return;
+    }
+
+    if (m.laserState === "charge") {
+      m.laserTimer -= dt;
+      if (m.laserTimer <= 0) {
+        m.laserState = "fire";
+        m.laserTimer = MINIONS.d.beam;
+        addBurst(m.x, m.y - 20, {
+          count: 10,
+          colors: ["#ff5a5a", "#ffffff", "#ffb0b0"],
+          speed: 70,
+          size: 2,
+          life: [0.15, 0.4],
+          gravity: 0,
+          angle: m.laserAngle,
+          spread: 0.5,
+        });
+        game.shake = Math.max(game.shake, 5);
+        game.flash = Math.max(game.flash, 0.26);
+        game.flashColor = "#ff5a5a";
+        sfx("laserFire");
+      }
+      return;
+    }
+
+    m.laserTimer -= dt;
+    const originX = m.x;
+    const originY = m.y - 21;
+    if (
+      !m.laserHit &&
+      distanceToRay(player.x, player.y - 8, originX, originY, m.laserAngle) <= 5 + player.r
+    ) {
+      m.laserHit = true;
+      if (player.dodgeTimer > 0) perfectDodge();
+      else hurtPlayer(MINIONS.d.laser, m.x, m.y);
+    }
+
+    if (m.laserTimer <= 0) {
+      m.laserState = "idle";
+      m.laserTimer = rand(2.7, 3.7);
+    }
+  }
+
+  function distanceToRay(px, py, ox, oy, angle) {
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    const along = (px - ox) * dx + (py - oy) * dy;
+    if (along <= 0) return Math.hypot(px - ox, py - oy);
+    return Math.abs((px - ox) * dy - (py - oy) * dx);
+  }
+
+  function handleContactDamage() {
+    if (player.hp <= 0 || player.hurtCd > 0 || player.dodgeTimer > 0) return;
+
+    for (const m of minions) {
+      if (m.dead) continue;
+      if (m.type !== "a" && m.type !== "b") continue;
+      if (dist(player.x, player.y, m.x, m.y) <= player.r + m.r + 0.6) {
+        player.hurtCd = 0.85;
+        hurtPlayer(MINIONS[m.type].contact, m.x, m.y);
+        break;
+      }
+    }
+  }
+
+  function separateMinions() {
+    for (let i = 0; i < minions.length; i += 1) {
+      const a = minions[i];
+      if (a.dead) continue;
+      for (let j = i + 1; j < minions.length; j += 1) {
+        const b = minions[j];
+        if (b.dead) continue;
+
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let d = Math.hypot(dx, dy);
+        if (d === 0) {
+          dx = 1;
+          dy = 0;
+          d = 1;
+        }
+        const minDistance = a.r + b.r - 1;
+        if (d >= minDistance) continue;
+
+        const overlap = minDistance - d;
+        const moveA = a.type !== "d";
+        const moveB = b.type !== "d";
+        if (moveA && moveB) {
+          a.x -= (dx / d) * overlap * 0.5;
+          a.y -= (dy / d) * overlap * 0.5;
+          b.x += (dx / d) * overlap * 0.5;
+          b.y += (dy / d) * overlap * 0.5;
+        } else if (moveA) {
+          a.x -= (dx / d) * overlap;
+          a.y -= (dy / d) * overlap;
+        } else if (moveB) {
+          b.x += (dx / d) * overlap;
+          b.y += (dy / d) * overlap;
+        }
+      }
+
+      if (a.type !== "d") {
+        a.x = clamp(a.x, ARENA.left + a.r, ARENA.right - a.r);
+        a.y = clamp(a.y, ARENA.top + a.r - 4, ARENA.bottom - 2);
+      }
+    }
+  }
+
+  function separatePlayerFromMinions() {
+    for (const m of minions) {
+      if (m.dead) continue;
+      let dx = player.x - m.x;
+      let dy = player.y - m.y;
+      let d = Math.hypot(dx, dy);
+      if (d === 0) {
+        dx = -1;
+        dy = 0;
+        d = 1;
+      }
+      const minDistance = player.r + m.r;
+      if (d >= minDistance) continue;
+
+      const overlap = minDistance - d;
+      player.x += (dx / d) * overlap * 0.8;
+      player.y += (dy / d) * overlap * 0.8;
+      if (m.type !== "d") {
+        m.x -= (dx / d) * overlap * 0.2;
+        m.y -= (dy / d) * overlap * 0.2;
+      }
+    }
+    clampPlayer();
+  }
+
+  function applyMinionDamage(m, damage, options = {}) {
+    if (m.dead) return;
+    const { critical = false, stun = false } = options;
+
+    const hpBeforeHit = m.hp;
+    m.hp = Math.max(0, m.hp - damage);
+    m.hurtFlash = 0.16;
+    stats.hits += 1;
+    stats.damageDealt += hpBeforeHit - m.hp;
+
+    const dx = m.x - player.x;
+    const dy = m.y - player.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const knockback = (critical ? 10 : 5) * (m.type === "d" ? 0.15 : 1);
+    m.x += (dx / length) * knockback;
+    m.y += (dy / length) * knockback;
+    m.x = clamp(m.x, ARENA.left + m.r, ARENA.right - m.r);
+    m.y = clamp(m.y, ARENA.top + m.r - 4, ARENA.bottom - 2);
+
+    addDamageNumber(
+      m.x + rand(-3, 3),
+      m.y - 26,
+      String(damage),
+      critical ? "#ffd36a" : "#f4fbff",
+      critical ? 12 : 8,
+      critical
+    );
+    addBurst(m.x, m.y - 10, {
+      count: critical ? 14 : 8,
+      colors: critical
+        ? ["#ffc857", "#ff6c6c", "#fff2c5", "#ffffff"]
+        : ["#ffb3ba", "#f4fbff", "#ff5d76"],
+      speed: critical ? 130 : 80,
+      size: critical ? 3 : 2,
+      life: [0.15, 0.45],
+      gravity: 170,
+    });
+
+    game.shake = Math.max(game.shake, critical ? 4.5 : 2);
+    game.freeze = Math.max(game.freeze, critical ? 0.05 : 0.02);
+    if (critical) {
+      stats.crits += 1;
+      sfx("crit");
+    } else {
+      sfx("hit");
+    }
+
+    if (stun && m.hp > 0) {
+      stats.stuns += 1;
+      m.state = "stunned";
+      m.timer = 1.6;
+      addRing(m.x, m.y - 12, "#8df4ff", 24, 0.38, 2);
+      addBurst(m.x, m.y - 18, {
+        count: 10,
+        colors: ["#8df4ff", "#ffffff"],
+        speed: 55,
+        size: 2,
+        life: [0.25, 0.6],
+        gravity: -10,
+      });
+      sfx("stun");
+    }
+
+    if (m.hp <= 0) killMinion(m, { count: true });
+  }
+
+  function killMinion(m, options = {}) {
+    if (m.dead) return;
+    const { count = true, silent = false } = options;
+
+    m.dead = true;
+    m.hp = 0;
+    m.deathTimer = 0.45;
+
+    if (count) {
+      stats.kills += 1;
+      if (waveState.state === "active") waveState.kills += 1;
+    }
+
+    addBurst(m.x, m.y - 12, {
+      count: silent ? 6 : 16,
+      colors: [MINIONS[m.type].color, "#ffffff", "#3a2440", "#ffd0d6"],
+      speed: silent ? 35 : 105,
+      size: 2,
+      life: [0.2, 0.6],
+      gravity: 180,
+    });
+    addRing(m.x, m.y - 10, MINIONS[m.type].color, silent ? 16 : 30, 0.35, 2);
+    if (!silent) sfx("minionDie");
+
+    if (
+      count &&
+      waveState.state === "active" &&
+      waveState.kills >= waveState.quota
+    ) {
+      beginWaveClear();
+    }
+  }
+
+  function nearestHostile() {
+    let best = null;
+    let bestDistance = Infinity;
+
+    if (enemy.active && enemy.hp > 0) {
+      best = enemy;
+      bestDistance = dist(player.x, player.y, enemy.x, enemy.y);
+    }
+
+    for (const m of minions) {
+      if (m.dead) continue;
+      const d = dist(player.x, player.y, m.x, m.y);
+      if (d < bestDistance) {
+        best = m;
+        bestDistance = d;
+      }
+    }
+
+    return best;
   }
 
   // ---------------------------------------------------------------------------
@@ -1007,6 +1779,7 @@
   }
 
   function updateEnemy(dt) {
+    if (!enemy.active) return;
     const e = enemy;
 
     e.hurtFlash = Math.max(0, e.hurtFlash - dt);
@@ -1092,6 +1865,7 @@
   }
 
   function separateEntities() {
+    if (!enemy.active || enemy.hp <= 0) return;
     let dx = player.x - enemy.x;
     let dy = player.y - enemy.y;
     let distance = Math.hypot(dx, dy);
@@ -1122,6 +1896,7 @@
     p.attackAnim = Math.max(0, p.attackAnim - dt);
     p.dodgeCd = Math.max(0, p.dodgeCd - dt);
     p.hurtFlash = Math.max(0, p.hurtFlash - dt);
+    p.hurtCd = Math.max(0, p.hurtCd - dt);
     p.displayHp += (p.hp - p.displayHp) * Math.min(1, dt * 7);
 
     if (p.buffTimer > 0) {
@@ -1194,11 +1969,13 @@
         p.moving = true;
       }
 
-      p.facing = enemy.x >= p.x ? 1 : -1;
+      const target = nearestHostile();
+      if (target) p.facing = target.x >= p.x ? 1 : -1;
     }
 
     clampPlayer();
     separateEntities();
+    separatePlayerFromMinions();
   }
 
   function updateEnding(dt) {
@@ -1240,7 +2017,11 @@
 
   function updateWorld(dt) {
     updatePlayer(dt);
+    updateWave(dt);
+    updateMinions(dt);
+    updateProjectiles(dt);
     updateEnemy(dt);
+    handleContactDamage();
   }
 
   // ---------------------------------------------------------------------------
@@ -1626,7 +2407,7 @@
   // Combat telegraph / entities
   // ---------------------------------------------------------------------------
   function drawTelegraph() {
-    if (enemy.state !== "windup" || enemy.hp <= 0) return;
+    if (!enemy.active || enemy.state !== "windup" || enemy.hp <= 0) return;
     const e = enemy;
     const progress = clamp(1 - e.timer / e.windupDuration, 0, 1);
     const pulse = Math.sin(game.clock * 16) * 0.5 + 0.5;
@@ -1683,6 +2464,7 @@
   }
 
   function drawEnemy() {
+    if (!enemy.active) return;
     const e = enemy;
     const t = game.clock;
     const dead = e.hp <= 0;
@@ -1972,18 +2754,273 @@
     }
   }
 
-  function drawEntities() {
-    // Floor shadows first
-    pixelEllipse(player.x, player.y + 1, player.dodgeTimer > 0 ? 8 : 12, 3, "rgba(0,0,0,0.4)");
-    pixelEllipse(enemy.x, enemy.y + 1, 18, 4, "rgba(0,0,0,0.45)");
+  function drawMinion(m) {
+    const def = MINIONS[m.type];
+    const t = game.clock;
+    const spawnAlpha = 1 - clamp(m.spawnFx / 0.4, 0, 1);
+    let alpha = m.dead ? clamp(m.deathTimer / 0.45, 0, 1) : 0.4 + spawnAlpha * 0.6;
+    if (m.dead) alpha *= 0.9;
+    if (alpha <= 0.01) return;
 
-    if (player.y <= enemy.y) {
-      drawPlayer();
-      drawEnemy();
-    } else {
-      drawEnemy();
-      drawPlayer();
+    const bob = m.dead ? 0 : Math.sin(t * 6 + m.walkPhase * 0.5) * 0.8;
+
+    if (m.state === "stunned" && !m.dead) {
+      for (let i = 0; i < 3; i += 1) {
+        const a = t * 3 + (i * TAU) / 3;
+        const sx = m.x + Math.cos(a) * 10;
+        const sy = m.y - (m.type === "d" ? 32 : 25) + Math.sin(a) * 3;
+        rect(sx - 1, sy, 2, 2, "#ffdf82");
+      }
     }
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(Math.round(m.x), Math.round(m.y + bob));
+    ctx.scale(m.facing, 1);
+    if (m.dead) {
+      ctx.translate(0, Math.min(4, (0.45 - m.deathTimer) * 10));
+      ctx.rotate(0.25);
+    }
+
+    if (m.type === "a") {
+      // Legs
+      rect(-5, -6, 3, 6, "#241018");
+      rect(2, -6, 3, 6, "#2c121c");
+      rect(-5, -2, 4, 2, "#0c0710");
+      rect(2, -2, 4, 2, "#0c0710");
+      // Body
+      rect(-6, -16, 12, 11, "#5a1c2a");
+      rect(-4, -15, 8, 7, "#8a2c3e");
+      rect(-6, -12, 12, 2, "#d8a15c");
+      // Arms
+      rect(-9, -15, 3, 7, "#4a1622");
+      rect(6, -15, 3, 7, "#4a1622");
+      rect(-9, -9, 3, 3, "#6b2a35");
+      rect(6, -9, 3, 3, "#6b2a35");
+      // Head + horns
+      rect(-5, -24, 10, 8, "#6e2333");
+      rect(-4, -23, 8, 5, "#9c3346");
+      rect(-5, -26, 2, 3, "#e8d5b0");
+      rect(3, -26, 2, 3, "#e8d5b0");
+      // Eyes
+      const eyeColor = m.state === "windup" ? "#ffef9e" : "#ffb347";
+      rect(-3, -22, 2, 2, eyeColor);
+      rect(1, -22, 2, 2, eyeColor);
+      rect(-1, -19, 3, 1, "#2a0e16");
+      // Club
+      if (m.state === "windup") {
+        pixelLine(7, -14, 12, -23, 2, "#8a6a45");
+        rect(10, -27, 4, 4, "#c9a267");
+      } else if (m.state === "strike") {
+        pixelLine(6, -14, 14, -14, 2, "#8a6a45");
+        rect(14, -16, 4, 4, "#c9a267");
+      } else {
+        pixelLine(7, -14, 10, -8, 2, "#8a6a45");
+      }
+    } else if (m.type === "b") {
+      // Motion streaks
+      rect(-13, -9, 5, 1, "rgba(255,107,224,0.5)");
+      rect(-11, -6, 4, 1, "rgba(255,107,224,0.32)");
+      // Legs
+      rect(-4, -4, 3, 4, "#2a0d33");
+      rect(2, -4, 3, 4, "#2a0d33");
+      // Body
+      rect(-6, -10, 12, 7, "#3a123f");
+      rect(-4, -9, 8, 5, "#a12ea8");
+      rect(-6, -8, 12, 1, "#ff6be0");
+      // Head
+      rect(2, -13, 6, 5, "#c154e0");
+      rect(6, -12, 2, 2, "#fff0ff");
+      rect(1, -15, 2, 2, "#ffd0ff");
+      rect(-1, -14, 2, 1, "#ff8ce8");
+    } else if (m.type === "c") {
+      // Robe
+      rect(-7, -8, 14, 8, "#2c1a3d");
+      rect(-6, -6, 12, 2, "#3f2757");
+      // Body
+      rect(-6, -18, 12, 11, "#3a2350");
+      rect(-4, -17, 8, 8, "#5b3a7a");
+      // Hood
+      rect(-7, -25, 14, 8, "#2c1a3d");
+      rect(-6, -24, 12, 6, "#4b2d66");
+      rect(-4, -23, 8, 4, "#20112c");
+      rect(-3, -22, 2, 1, "#8df4ff");
+      rect(1, -22, 2, 1, "#8df4ff");
+      // Arms
+      rect(-9, -16, 3, 2, "#5b3a7a");
+      rect(6, -16, 3, 2, "#5b3a7a");
+      // Orb
+      const orbPulse =
+        1.5 + Math.sin(t * 7 + m.walkPhase) * 0.6 + (m.shotTimer < 0.3 ? 1.2 : 0);
+      pixelCircle(9, -14, orbPulse, "#7a4dff");
+      pixelCircle(9, -14, orbPulse * 0.55, "#e6cbff");
+      // Staff
+      pixelLine(-8, -18, -11, -3, 1, "#6b4b8a");
+    } else {
+      // Base
+      rect(-10, -8, 20, 8, "#2c2733");
+      rect(-8, -10, 16, 4, "#3b3545");
+      // Pillar
+      rect(-5, -17, 10, 8, "#4a4356");
+      rect(-3, -16, 6, 6, "#5d556b");
+      // Housing
+      rect(-8, -26, 16, 11, "#3a3444");
+      rect(-6, -25, 12, 8, "#554d63");
+      // Lens
+      const charge =
+        m.laserState === "charge" ? 1 - clamp(m.laserTimer / MINIONS.d.charge, 0, 1) : 0;
+      const lensColor =
+        m.laserState === "fire"
+          ? "#ffffff"
+          : m.laserState === "charge"
+            ? "#ff8a8a"
+            : "#ff5b5b";
+      pixelCircle(0, -21, 2.5 + charge * 2, lensColor);
+      pixelCircle(0, -21, 1.2, "#3a0a0a");
+      // Spikes
+      rect(-10, -24, 2, 4, "#6b6172");
+      rect(8, -24, 2, 4, "#6b6172");
+      rect(-1, -28, 2, 2, "#8a8092");
+    }
+
+    if (m.hurtFlash > 0) {
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = alpha * clamp(m.hurtFlash * 4, 0, 0.55);
+      const height = m.type === "d" ? 26 : 20;
+      rect(-7, -height, 14, height, "#ffb4bd");
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    ctx.restore();
+
+    if (!m.dead && m.hp < m.maxHp) {
+      const w = 16;
+      const bx = Math.round(m.x - w / 2);
+      const by = Math.round(
+        m.y - (m.type === "d" ? 35 : m.type === "b" ? 22 : 32)
+      );
+      rect(bx - 1, by - 1, w + 2, 4, "rgba(3,5,10,0.8)");
+      rect(bx, by, w, 2, "#1b2230");
+      rect(bx, by, Math.max(1, Math.round((w * m.hp) / m.maxHp)), 2, def.color);
+    }
+  }
+
+  function drawMinionTelegraphs() {
+    for (const m of minions) {
+      if (m.dead) continue;
+
+      if (m.type === "a" && m.state === "windup") {
+        const progress = clamp(1 - m.timer / 0.42, 0, 1);
+        ctx.save();
+        ctx.translate(m.x, m.y - 2);
+        ctx.globalAlpha = 0.12 + progress * 0.22;
+        ctx.fillStyle = "#ff284f";
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, 30, m.attackAngle - 1.15, m.attackAngle + 1.15);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 0.35 + progress * 0.45;
+        ctx.strokeStyle = "#ff506d";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(0, 0, 30, m.attackAngle - 1.15, m.attackAngle + 1.15);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if (m.type === "d" && m.laserState === "charge") {
+        const progress = 1 - clamp(m.laserTimer / MINIONS.d.charge, 0, 1);
+        const originX = m.x;
+        const originY = m.y - 21;
+        ctx.save();
+        ctx.globalAlpha = 0.25 + progress * 0.65;
+        ctx.strokeStyle = "#ff3434";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(originX, originY);
+        ctx.lineTo(originX + Math.cos(m.laserAngle) * 620, originY + Math.sin(m.laserAngle) * 620);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  function drawProjectiles() {
+    for (const p of projectiles) {
+      const fade = clamp(p.life / 0.4, 0, 1);
+      const pulse = Math.sin(game.clock * 18 + p.x * 0.12) * 0.5 + 0.5;
+      ctx.save();
+      ctx.globalAlpha = fade;
+      ctx.strokeStyle = "rgba(197,139,255,0.45)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(p.x - p.vx * 0.035, p.y - p.vy * 0.035);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.globalAlpha = fade * (0.25 + pulse * 0.12);
+      pixelCircle(p.x, p.y, 7, "#7a4dff");
+      ctx.globalAlpha = fade;
+      pixelCircle(p.x, p.y, 3, "#c58bff");
+      rect(p.x - 1, p.y - 1, 2, 2, "#ffffff");
+      ctx.restore();
+    }
+  }
+
+  function drawLaserBeams() {
+    for (const m of minions) {
+      if (m.dead || m.type !== "d" || m.laserState !== "fire") continue;
+      const ox = m.x;
+      const oy = m.y - 21;
+      const ex = ox + Math.cos(m.laserAngle) * 620;
+      const ey = oy + Math.sin(m.laserAngle) * 620;
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.globalAlpha = 0.14;
+      ctx.strokeStyle = "#ff2d2d";
+      ctx.lineWidth = 16;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = "#ff5a5a";
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.globalAlpha = 0.95;
+      ctx.strokeStyle = "#fff3f3";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawEntities() {
+    pixelEllipse(player.x, player.y + 1, player.dodgeTimer > 0 ? 8 : 12, 3, "rgba(0,0,0,0.4)");
+    if (enemy.active) {
+      pixelEllipse(enemy.x, enemy.y + 1, 18, 4, "rgba(0,0,0,0.45)");
+    }
+    for (const m of minions) {
+      if (m.dead) continue;
+      const rx = m.type === "d" ? 12 : m.type === "b" ? 7 : 9;
+      pixelEllipse(m.x, m.y + 1, rx, 3, "rgba(0,0,0,0.38)");
+    }
+
+    const list = [];
+    if (enemy.active) list.push({ y: enemy.y, draw: drawEnemy });
+    list.push({ y: player.y, draw: drawPlayer });
+    for (const m of minions) {
+      if (m.dead && m.deathTimer <= 0) continue;
+      list.push({ y: m.y, draw: () => drawMinion(m) });
+    }
+    list.sort((a, b) => a.y - b.y);
+    for (const item of list) item.draw();
   }
 
   // ---------------------------------------------------------------------------
@@ -2140,33 +3177,59 @@
     ctx.fillStyle = player.dodgeCd <= 0 ? "#63e9f3" : "#376a76";
     ctx.fillRect(67, 35, Math.max(0, Math.round(53 * dodgeRatio)), 1);
 
-    // Boss
-    text("ONI WARDEN", 464, 10, {
-      size: 7,
-      color: enemy.enraged ? "#ff8da0" : "#ffb2bf",
-      align: "right",
-    });
-    drawBar(
-      328,
-      20,
-      136,
-      7,
-      enemy.hp / enemy.maxHp,
-      enemy.displayHp / enemy.maxHp,
-      "#ff4d6d",
-      "#ffd2d8"
-    );
-    text("LV. 12", 328, 32, {
-      size: 6,
-      color: enemy.enraged ? "#ff7088" : "#776f82",
-    });
-    if (enemy.enraged) {
-      text("ENRAGED", 464, 32, {
-        size: 6,
-        color: "#ff5c76",
+    if (enemy.active) {
+      text("ONI WARDEN", 464, 10, {
+        size: 7,
+        color: enemy.enraged ? "#ff8da0" : "#ffb2bf",
         align: "right",
-        alpha: 0.65 + Math.sin(game.clock * 8) * 0.25,
       });
+      drawBar(
+        328,
+        20,
+        136,
+        7,
+        enemy.hp / enemy.maxHp,
+        enemy.displayHp / enemy.maxHp,
+        "#ff4d6d",
+        "#ffd2d8"
+      );
+      text("FINAL WAVE", 328, 32, {
+        size: 6,
+        color: enemy.enraged ? "#ff7088" : "#776f82",
+      });
+      if (enemy.enraged) {
+        text("ENRAGED", 464, 32, {
+          size: 6,
+          color: "#ff5c76",
+          align: "right",
+          alpha: 0.65 + Math.sin(game.clock * 8) * 0.25,
+        });
+      }
+    } else {
+      const waveRatio =
+        waveState.quota > 0 ? clamp(waveState.kills / waveState.quota, 0, 1) : 0;
+      text("WAVE " + (waveState.index + 1) + " / 3", 464, 10, {
+        size: 7,
+        color: "#ffd27a",
+        align: "right",
+      });
+      drawBar(328, 20, 136, 7, waveRatio, waveRatio, "#ffb454", "#ffe0a8");
+      text("MINIONS " + waveState.kills + " / " + waveState.quota, 328, 32, {
+        size: 6,
+        color: "#bfae8d",
+      });
+      text(
+        waveState.state === "clear"
+          ? "WAVE CLEAR"
+          : "LEFT " + Math.max(0, waveState.quota - waveState.kills),
+        464,
+        32,
+        {
+          size: 6,
+          color: "#8d7a5f",
+          align: "right",
+        }
+      );
     }
 
     // Center time
@@ -2238,7 +3301,10 @@
     ctx.translate(Math.round(shakeX), Math.round(shakeY));
     drawBackground();
     drawTelegraph();
+    drawMinionTelegraphs();
     drawEntities();
+    drawLaserBeams();
+    drawProjectiles();
     drawFx();
     ctx.restore();
 
